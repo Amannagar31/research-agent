@@ -1,4 +1,4 @@
-yamlname: Daily Research Agent
+name: Daily Research Agent
 
 on:
   schedule:
