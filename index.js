@@ -48,8 +48,9 @@ Return ONLY a raw JSON array — no markdown, no backticks, no explanation. Form
 }
 
 async function appendToSheet(topics) {
-  const credentials = JSON.parse(readFileSync("./service-account.json"));
-
+const credentials = process.env.GOOGLE_SERVICE_ACCOUNT_JSON 
+  ? JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT_JSON)
+  : JSON.parse(readFileSync("./service-account.json"));
   const auth = new google.auth.GoogleAuth({
     credentials,
     scopes: ["https://www.googleapis.com/auth/spreadsheets"],
