@@ -7,90 +7,166 @@ dotenv.config();
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
-async function fetchTrendingTopics() {
-  console.log("🔍 Searching for trending topics...");
+const NICHES = [
+  "AI tools & design",
+  "No-code / automation",
+  "Product & UX",
+  "Design case study",
+  "Brand Design Case study"
+];
+
+// ── Google Auth ────────────────────────────────────────────────────────────
+function getCredentials() {
+  if (process.env.GOOGLE_SERVICE_ACCOUNT_JSON) {
+    return JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT_JSON);
+  }
+  return JSON.parse(readFileSync("./service-account.json"));
+}
+
+// ── Claude: fetch trending topics + reel script ────────────────────────────
+async function fetchTopicsForNiche(niche) {
+  console.log(`\n🔍 Researching: ${niche}`);
 
   const response = await client.messages.create({
     model: "claude-opus-4-6",
-    max_tokens: 4000,
+    max_tokens: 2000,
     tools: [{ type: "web_search_20250305", name: "web_search" }],
     messages: [
       {
         role: "user",
-        content: `You are a content research assistant for a creator who writes for designers and non-developers building with AI tools.
+        content: `You are a content research assistant for a creator who makes short-form content about design, AI tools, and creativity.
 
-Search the web right now and find the top 5 trending topics in the 'AI tools & design' space from the last 48 hours.
-Look at X/Twitter, Reddit (r/artificial, r/ChatGPT, r/DesignTools), Product Hunt, and tech blogs.
+Search the web and find the top 3 trending topics in "${niche}" from the last 48 hours.
 
-Return ONLY a raw JSON array — no markdown, no backticks, no explanation. Format:
+For each topic also write a 30-second reel script in this style:
+- Hook (1 punchy line that stops the scroll)
+- Insight (2-3 sentences of the core idea, plain English, no jargon)
+- CTA (1 line telling viewers what to do next)
+
+Target audience: designers, brand builders, and non-devs who want to stay ahead.
+
+Return ONLY a raw JSON array — no markdown, no backticks, no explanation:
 [
   {
     "topic": "short topic title",
     "summary": "2 sentence plain English summary of why it is trending",
     "source": "URL or platform name",
-    "angle": "one content angle for designers or non-devs building with AI",
-    "format": "Thread / Carousel / Long-form"
+    "angle": "one content angle for designers or non-devs",
+    "format": "Thread / Carousel / Reel",
+    "reel_script": "Hook: ...\\n\\nInsight: ...\\n\\nCTA: ..."
   }
 ]`,
       },
     ],
   });
 
-  // Web search runs server-side; response has multiple text blocks — join them all
-  const fullText = response.content
-    .filter((b) => b.type === "text")
-    .map((b) => b.text)
-    .join("\n");
+  const textBlock = response.content.find((block) => block.type === "text");
+  if (!textBlock) throw new Error("No text response from Claude");
 
-  const match = fullText.match(/\[[\s\S]*\]/);
-  if (!match) throw new Error(`No JSON array found in response:\n${fullText}`);
-  return JSON.parse(match[0]);
+  const clean = textBlock.text.replace(/```json|```/g, "").trim();
+  return JSON.parse(clean);
 }
 
-async function appendToSheet(topics) {
-const credentials = process.env.GOOGLE_SERVICE_ACCOUNT_JSON 
-  ? JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT_JSON)
-  : JSON.parse(readFileSync("./service-account.json"));
-  const auth = new google.auth.GoogleAuth({
-    credentials,
-    scopes: ["https://www.googleapis.com/auth/spreadsheets"],
+// ── Google Docs: create a doc for each reel script ─────────────────────────
+async function createReelDoc(auth, topic, niche, script) {
+  const docs = google.docs({ version: "v1", auth });
+  const drive = google.drive({ version: "v3", auth });
+
+  const doc = await docs.documents.create({
+    requestBody: { title: `Reel: ${topic}` },
   });
 
+  const docId = doc.data.documentId;
+
+  await docs.documents.batchUpdate({
+    documentId: docId,
+    requestBody: {
+      requests: [
+        {
+          insertText: {
+            location: { index: 1 },
+            text: `Niche: ${niche}\nTopic: ${topic}\n\n${script}`,
+          },
+        },
+      ],
+    },
+  });
+
+  const file = await drive.files.get({
+    fileId: docId,
+    fields: "webViewLink",
+  });
+
+  return file.data.webViewLink;
+}
+
+// ── Google Sheets: append rows ─────────────────────────────────────────────
+async function appendToSheet(auth, topics, niche) {
   const sheets = google.sheets({ version: "v4", auth });
-  const rawId = process.env.GOOGLE_SHEET_ID;
-  const sheetId = rawId.includes("/d/")
-    ? rawId.match(/\/d\/([a-zA-Z0-9_-]+)/)[1]
-    : rawId;
+  const sheetId = process.env.GOOGLE_SHEET_ID;
   const today = new Date().toLocaleDateString("en-IN");
 
   const rows = topics.map((t) => [
     today,
+    niche,
     t.topic,
     t.summary,
     t.source,
     t.angle,
     t.format,
+    t.doc_url || "",
   ]);
 
   await sheets.spreadsheets.values.append({
     spreadsheetId: sheetId,
-    range: "Sheet1!A:F",
+    range: "Sheet1!A:H",
     valueInputOption: "USER_ENTERED",
     requestBody: { values: rows },
   });
-
-  console.log(`✅ ${rows.length} topics written to Google Sheets`);
 }
 
+// ── Main ───────────────────────────────────────────────────────────────────
 async function main() {
-  try {
-    const topics = await fetchTrendingTopics();
-    console.log(`\n📋 Found ${topics.length} topics:\n`);
-    topics.forEach((t, i) => console.log(`${i + 1}. ${t.topic}`));
-    await appendToSheet(topics);
-  } catch (err) {
-    console.error("❌ Error:", err.message);
+  const credentials = getCredentials();
+
+  const auth = new google.auth.GoogleAuth({
+    credentials,
+    scopes: [
+      "https://www.googleapis.com/auth/spreadsheets",
+      "https://www.googleapis.com/auth/documents",
+      "https://www.googleapis.com/auth/drive",
+    ],
+  });
+
+  for (const niche of NICHES) {
+    try {
+      const topics = await fetchTopicsForNiche(niche);
+      console.log(`📋 Found ${topics.length} topics for "${niche}"`);
+
+      for (const topic of topics) {
+        try {
+          const docUrl = await createReelDoc(
+            auth,
+            topic.topic,
+            niche,
+            topic.reel_script
+          );
+          topic.doc_url = docUrl;
+          console.log(`📄 Doc created: ${topic.topic}`);
+        } catch (err) {
+          console.error(`❌ Doc error for "${topic.topic}":`, err.message);
+          topic.doc_url = "";
+        }
+      }
+
+      await appendToSheet(auth, topics, niche);
+      console.log(`✅ Sheet updated for "${niche}"`);
+    } catch (err) {
+      console.error(`❌ Error for niche "${niche}":`, err.message);
+    }
   }
+
+  console.log("\n🎉 All done!");
 }
 
 main();
