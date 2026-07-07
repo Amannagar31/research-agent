@@ -67,32 +67,6 @@ Return ONLY a raw JSON array, no text before or after it:
   return JSON.parse(jsonMatch[0]);
 }
 
-async function createReelDoc(auth, topic, niche, script) {
-  const docs = google.docs({ version: "v1", auth });
-
-  const doc = await docs.documents.create({
-    requestBody: { title: `Reel: ${topic}` }
-  });
-
-  const docId = doc.data.documentId;
-
-  await docs.documents.batchUpdate({
-    documentId: docId,
-    requestBody: {
-      requests: [
-        {
-          insertText: {
-            location: { index: 1 },
-            text: `Niche: ${niche}\nTopic: ${topic}\n\n${script}`
-          }
-        }
-      ]
-    }
-  });
-
-  return `https://docs.google.com/document/d/${docId}/edit`;
-}
-
 async function appendToSheet(auth, topics, niche) {
   const sheets = google.sheets({ version: "v4", auth });
   const sheetId = process.env.GOOGLE_SHEET_ID;
@@ -106,7 +80,7 @@ async function appendToSheet(auth, topics, niche) {
     t.source,
     t.angle,
     t.format,
-    t.doc_url || ""
+    t.reel_script || ""
   ]);
 
   await sheets.spreadsheets.values.append({
@@ -123,9 +97,7 @@ async function main() {
   const auth = new google.auth.GoogleAuth({
     credentials,
     scopes: [
-      "https://www.googleapis.com/auth/spreadsheets",
-      "https://www.googleapis.com/auth/documents",
-      "https://www.googleapis.com/auth/drive"
+      "https://www.googleapis.com/auth/spreadsheets"
     ]
   });
 
@@ -133,18 +105,6 @@ async function main() {
     try {
       const topics = await fetchTopicsForNiche(niche);
       console.log(`📋 Found ${topics.length} topics for "${niche}"`);
-
-      for (const topic of topics) {
-        try {
-          const docUrl = await createReelDoc(auth, topic.topic, niche, topic.reel_script);
-          topic.doc_url = docUrl;
-          console.log(`📄 Doc created: ${topic.topic}`);
-        } catch (err) {
-          console.error(`❌ Doc error for "${topic.topic}":`, err.message);
-          topic.doc_url = "";
-        }
-      }
-
       await appendToSheet(auth, topics, niche);
       console.log(`✅ Sheet updated for "${niche}"`);
     } catch (err) {
