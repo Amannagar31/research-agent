@@ -60,12 +60,10 @@ Return ONLY a raw JSON array — no markdown, no backticks, no explanation:
     ],
   });
 
-  const textBlock = response.content.find((block) => block.type === "text");
-  if (!textBlock) throw new Error("No text response from Claude");
-
-  const clean = textBlock.text.replace(/```json|```/g, "").trim();
-  return JSON.parse(clean);
-}
+const text = textBlock.text;
+const jsonMatch = text.match(/\[[\s\S]*\]/);
+if (!jsonMatch) throw new Error("No JSON array found in response");
+return JSON.parse(jsonMatch[0]);
 
 // ── Google Docs: create a doc for each reel script ─────────────────────────
 async function createReelDoc(auth, topic, niche, script) {
