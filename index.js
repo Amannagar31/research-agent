@@ -69,7 +69,6 @@ Return ONLY a raw JSON array, no text before or after it:
 
 async function createReelDoc(auth, topic, niche, script) {
   const docs = google.docs({ version: "v1", auth });
-  const drive = google.drive({ version: "v3", auth });
 
   const doc = await docs.documents.create({
     requestBody: { title: `Reel: ${topic}` }
@@ -91,12 +90,7 @@ async function createReelDoc(auth, topic, niche, script) {
     }
   });
 
-  const file = await drive.files.get({
-    fileId: docId,
-    fields: "webViewLink"
-  });
-
-  return file.data.webViewLink;
+  return `https://docs.google.com/document/d/${docId}/edit`;
 }
 
 async function appendToSheet(auth, topics, niche) {
