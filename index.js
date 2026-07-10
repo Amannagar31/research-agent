@@ -26,7 +26,7 @@ async function fetchTopicsForNiche(niche) {
   console.log(`\n🔍 Researching: ${niche}`);
 
   const response = await client.messages.create({
-    model: "Claude opus 4-8",
+    model: "Claude-opus 4-8",
     max_tokens: 2000,
     tools: [{ type: "web_search_20250305", name: "web_search" }],
     messages: [
